@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useNearWallet } from "near-connect-hooks";
 import { parseConfig, parsePieces, type ChainConfig, type ChainPiece } from "@/lib/contract";
 import { PALETTE, SHAPES, type Placement } from "@/lib/plot";
+import { BuildChat } from "./build-chat";
 
 const PlotScene = dynamic(() => import("./plot-scene"), {
   ssr: false,
@@ -19,15 +20,16 @@ export function TodayPlot() {
   const [color, setColor] = useState(0);
   const [day, setDay] = useState(0);
   const [pieces, setPieces] = useState<ChainPiece[] | null>(null);
-  const [config, setConfig] = useState<ChainConfig>({ allowance_per_day: 12, plot_size: { x: 12, y: 12, z: 12 } });
+  const [config, setConfig] = useState<ChainConfig>({ allowance_per_day: 1, build_credit_price: "10000000000000000000000", plot_size: { x: 12, y: 12, z: 12 } });
   const [allowance, setAllowance] = useState<number | null>(null);
+  const [credits, setCredits] = useState<number | null>(null);
   const [ghost, setGhost] = useState<{ placement: Placement; valid: boolean; reason?: string } | null>(null);
-  const [status, setStatus] = useState<"idle" | "loading" | "placing" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "loading" | "placing" | "buying" | "error">("idle");
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
     if (!contractId) return;
-    setStatus((current) => current === "placing" ? current : "loading");
+    setStatus((current) => current === "placing" || current === "buying" ? current : "loading");
     try {
       const currentDay = Number(await viewFunction({ contractId, method: "current_day", args: {} }));
       const [rawConfig, rawPieces] = await Promise.all([
@@ -39,10 +41,15 @@ export function TodayPlot() {
       setConfig(nextConfig);
       setPieces(parsePieces(rawPieces));
       if (signedAccountId) {
-        const left = await viewFunction({ contractId, method: "allowance_left", args: { account_id: signedAccountId, day: currentDay } });
+        const [left, balance] = await Promise.all([
+          viewFunction({ contractId, method: "allowance_left", args: { account_id: signedAccountId, day: currentDay } }),
+          viewFunction({ contractId, method: "credit_balance", args: { account_id: signedAccountId } }),
+        ]);
         setAllowance(Number(left));
+        setCredits(Number(balance));
       } else {
         setAllowance(null);
+        setCredits(null);
       }
       setStatus("idle");
       setMessage("");
@@ -91,12 +98,39 @@ export function TodayPlot() {
     }
   };
 
+  const buyCredits = async () => {
+    if (!signedAccountId) { await signIn(); return; }
+    const amount = 10;
+    setStatus("buying");
+    setMessage("Confirm 10 build credits in your wallet");
+    try {
+      await callFunction({
+        contractId,
+        method: "buy_credits",
+        args: { credits: amount },
+        gas: "30000000000000",
+        deposit: (BigInt(config.build_credit_price) * BigInt(amount) + 10_000_000_000_000_000_000_000n).toString(),
+      });
+      await refresh();
+      setMessage("10 build credits added");
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Credits were not purchased");
+    }
+  };
+
+  const selectedCost = SHAPES.find((candidate) => candidate.id === shape)?.offsets.length ?? 0;
+  const needsCredits = signedAccountId && allowance === 0;
+  const lacksCredits = Boolean(needsCredits && (credits ?? 0) < selectedCost);
+
   const placeLabel = !contractId
     ? "Add contract ID to enable placement"
     : !signedAccountId
       ? "Connect wallet to place"
       : status === "placing"
         ? "Placing piece…"
+        : lacksCredits
+          ? `Needs ${selectedCost} build credits`
         : !ghost?.valid
           ? ghost?.reason ?? "Choose a valid position"
           : "Place piece";
@@ -114,12 +148,14 @@ export function TodayPlot() {
           rotation={rotation}
           color={color}
           pieces={pieces}
+          demo={!contractId}
           size={config.plot_size}
           onPlacementChange={handlePlacementChange}
         />
         <div className="scene-note"><span className="live-dot" /> {contractId ? `Live day ${day}` : "Demo composition"} · drag to orbit</div>
       </section>
 
+      <div className="side-rail">
       <aside className="workbench" aria-label="Piece placement controls">
         <div className="theme-block">
           <p>Today’s build</p>
@@ -128,7 +164,12 @@ export function TodayPlot() {
         </div>
 
         <div className="field-row">
-          <span>Allowance</span><strong>{allowance ?? "—"} / {config.allowance_per_day} pieces left</strong>
+          <span>Free placement</span><strong>{allowance ?? "—"} left today</strong>
+        </div>
+
+        <div className="credit-row">
+          <span><b>{credits ?? "—"}</b> banked credits</span>
+          <button onClick={() => void buyCredits()} disabled={status === "buying"} type="button">{status === "buying" ? "Buying…" : "Buy 10"}</button>
         </div>
 
         <fieldset>
@@ -143,7 +184,7 @@ export function TodayPlot() {
                 type="button"
               >
                 <span className={`shape-mark shape-${candidate.id}`} aria-hidden="true" />
-                {candidate.name}
+                {candidate.name}<small>{candidate.offsets.length} cr</small>
               </button>
             ))}
           </div>
@@ -174,7 +215,7 @@ export function TodayPlot() {
         <button
           className="place-button"
           type="button"
-          disabled={status === "placing" || Boolean(signedAccountId && (!contractId || !ghost?.valid))}
+          disabled={status === "placing" || status === "buying" || lacksCredits || Boolean(signedAccountId && (!contractId || !ghost?.valid))}
           onClick={() => void place()}
         >
           {placeLabel}
@@ -187,6 +228,8 @@ export function TodayPlot() {
           <strong>90% builders · 10% treasury</strong>
         </div>
       </aside>
+      <BuildChat day={day} />
+      </div>
     </main>
   );
 }

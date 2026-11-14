@@ -28,6 +28,7 @@ async fn place_finalize_collect_and_withdraw() -> testresult::TestResult<()> {
                     "epoch_len_ns": 5_000_000_000_u64,
                     "edition_window_ns": 60_000_000_000_u64,
                     "edition_price": NearToken::from_millinear(100),
+                    "build_credit_price": NearToken::from_millinear(10),
                     "allowance_per_day": 8,
                     "plot_size": { "x": 8, "y": 8, "z": 8 },
                     "builders_bps": 9_000

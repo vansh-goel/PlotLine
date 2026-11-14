@@ -16,7 +16,7 @@ People collaboratively building a shared voxel sculpture and collectors supporti
 
 ## Product Purpose
 
-PlotLine gives everyone one shared 3D plot per day. Contributors place a limited number of pieces, the finished plot becomes a time-limited collectible edition, and sale proceeds reward the people who built it.
+PlotLine gives everyone one shared 3D plot per day. Contributors get one free daily placement and can spend banked paid credits for more, the finished plot becomes a time-limited collectible edition, and sale proceeds reward the people who built it.
 
 ## Positioning
 
@@ -29,8 +29,8 @@ Users connect a NEAR wallet, place or remove supported pieces, watch the shared 
 ## Capabilities and Constraints
 
 - Testnet-only hackathon build.
-- A fixed shape catalog, palette, plot bounds, support rules, and daily per-account allowance are enforced by the contract.
-- Ninety percent of each edition sale is split by active pieces at finalization; ten percent accrues to the configured treasury.
+- A fixed shape catalog, palette, plot bounds, support rules, free-placement allowance, and paid credit balance are enforced by the contract.
+- Ninety percent of each edition sale is split by active shape-credit weight at finalization; ten percent accrues to the configured treasury.
 - Edition sales close after a fixed window.
 - Per-account limits are not Sybil resistance.
 - Cross-chain collection is a stretch feature and must remain an explicitly two-step, dry-quote demo unless a real flow is verified.

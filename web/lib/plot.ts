@@ -12,7 +12,7 @@ export const SHAPES = [
     offsets: [[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0], [0, 0, 1], [1, 0, 1], [2, 0, 1], [3, 0, 1]],
   },
   { id: 4, name: "Cylinder", offsets: [[0, 0, 0]] },
-  { id: 5, name: "Slope", offsets: [[0, 0, 0], [1, 0, 0]] },
+  { id: 5, name: "Slope", offsets: [[0, 0, 0]] },
 ] as const;
 
 export const PALETTE = [
@@ -38,6 +38,21 @@ export function occupiedVoxels(placement: Placement): Voxel[] {
     y: placement.y + voxel.y,
     z: placement.z + voxel.z - minZ,
   }));
+}
+
+export function snapWorldPoint(point: Voxel, surfaceNormal: Voxel, size: PlotSize): Voxel {
+  const axes = ["x", "y", "z"] as const;
+  const axis = axes.reduce((largest, candidate) =>
+    Math.abs(surfaceNormal[candidate]) > Math.abs(surfaceNormal[largest]) ? candidate : largest,
+  );
+  const offset = { x: 0, y: 0, z: 0 };
+  offset[axis] = Math.sign(surfaceNormal[axis]) * 0.22;
+
+  return {
+    x: Math.max(0, Math.min(size.x - 1, Math.floor(point.x + offset.x + size.x / 2))),
+    y: Math.max(0, Math.min(size.y - 1, Math.floor(point.y + offset.y))),
+    z: Math.max(0, Math.min(size.z - 1, Math.floor(point.z + offset.z + size.z / 2))),
+  };
 }
 
 const key = ({ x, y, z }: Voxel) => `${x}:${y}:${z}`;

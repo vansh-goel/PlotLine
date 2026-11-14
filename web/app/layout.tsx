@@ -2,6 +2,7 @@ import "@fontsource-variable/archivo";
 import "./globals.css";
 import type { Metadata } from "next";
 import { Providers } from "@/components/providers";
+import { SiteHeader } from "@/components/site-header";
 
 export const metadata: Metadata = {
   title: "PlotLine — build today together",
@@ -12,7 +13,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en">
       <body>
-        <Providers>{children}</Providers>
+        <Providers>
+          <div className="app-shell">
+            <SiteHeader />
+            {children}
+          </div>
+        </Providers>
       </body>
     </html>
   );

@@ -18,6 +18,7 @@ use std::collections::HashMap;
 const MAX_EPOCH_NS: u64 = 48 * 60 * 60 * 1_000_000_000;
 const MAX_EDITION_WINDOW_NS: u64 = 7 * 24 * 60 * 60 * 1_000_000_000;
 const MAX_ALLOWANCE: u16 = 256;
+const MAX_BUILD_CREDIT_PRICE: NearToken = NearToken::from_near(10);
 const MAX_BATCH_SIZE: usize = 16;
 const MAX_PAGE_SIZE: u32 = 100;
 const PALETTE_SIZE: u8 = 16;
@@ -33,7 +34,10 @@ enum StorageKey {
     DayPieceIds,
     DayPieces { day: u64 },
     ActivePieceCounts,
+    ActiveCreditCounts,
     BuilderPieceCounts,
+    BuilderCreditCounts,
+    CreditBalances,
     Days,
     Claimed,
     Nft,
@@ -58,6 +62,7 @@ pub struct Config {
     pub epoch_len_ns: u64,
     pub edition_window_ns: u64,
     pub edition_price: NearToken,
+    pub build_credit_price: NearToken,
     pub allowance_per_day: u16,
     pub plot_size: PlotSize,
     pub builders_bps: u16,
@@ -89,6 +94,7 @@ pub struct ShapeView {
     pub id: u8,
     pub name: String,
     pub voxels: Vec<(i8, i8, i8)>,
+    pub credits: u16,
 }
 
 #[near(serializers = [borsh])]
@@ -120,10 +126,12 @@ pub struct DayState {
     pub finalized_at_ns: u64,
     pub sale_ends_at_ns: u64,
     pub total_pieces: u32,
+    pub total_credits: u32,
+    pub edition_price: NearToken,
     pub editions_minted: u64,
     pub proceeds: NearToken,
     pub builder_pool: NearToken,
-    pub acc_per_piece_scaled: U128,
+    pub acc_per_credit_scaled: U128,
     pub treasury_earned: NearToken,
     pub dust_swept: NearToken,
 }
@@ -146,7 +154,10 @@ pub struct Contract {
     allowance_used: LookupMap<AllowanceKey, u16>,
     day_piece_ids: LookupMap<u64, Vector<u64>>,
     active_piece_counts: LookupMap<u64, u32>,
+    active_credit_counts: LookupMap<u64, u32>,
     builder_piece_counts: LookupMap<DayAccountKey, u32>,
+    builder_credit_counts: LookupMap<DayAccountKey, u32>,
+    credit_balances: LookupMap<AccountId, u32>,
     days: LookupMap<u64, DayState>,
     claimed: LookupMap<DayAccountKey, u128>,
     treasury_balance: u128,
@@ -198,7 +209,10 @@ impl Contract {
             allowance_used: LookupMap::new(StorageKey::AllowanceUsed),
             day_piece_ids: LookupMap::new(StorageKey::DayPieceIds),
             active_piece_counts: LookupMap::new(StorageKey::ActivePieceCounts),
+            active_credit_counts: LookupMap::new(StorageKey::ActiveCreditCounts),
             builder_piece_counts: LookupMap::new(StorageKey::BuilderPieceCounts),
+            builder_credit_counts: LookupMap::new(StorageKey::BuilderCreditCounts),
+            credit_balances: LookupMap::new(StorageKey::CreditBalances),
             days: LookupMap::new(StorageKey::Days),
             claimed: LookupMap::new(StorageKey::Claimed),
             treasury_balance: 0,
@@ -229,6 +243,7 @@ impl Contract {
                 id: shape.id,
                 name: shape.name.to_string(),
                 voxels: shape.voxels.to_vec(),
+                credits: shape.credits(),
             })
             .collect()
     }
@@ -241,6 +256,10 @@ impl Contract {
         self.config
             .allowance_per_day
             .saturating_sub(self.allowance_used.get(&key).copied().unwrap_or(0))
+    }
+
+    pub fn credit_balance(&self, account_id: AccountId) -> u32 {
+        self.credit_balances.get(&account_id).copied().unwrap_or(0)
     }
 
     pub fn piece(&self, piece_id: u64) -> Option<Piece> {
@@ -274,13 +293,20 @@ impl Contract {
             .unwrap_or(0)
     }
 
+    pub fn builder_credits(&self, day: u64, account_id: AccountId) -> u32 {
+        self.builder_credit_counts
+            .get(&DayAccountKey { day, account_id })
+            .copied()
+            .unwrap_or(0)
+    }
+
     pub fn claimable(&self, day: u64, account_id: AccountId) -> NearToken {
         let Some(state) = self.days.get(&day) else {
             return NearToken::from_yoctonear(0);
         };
         let key = DayAccountKey { day, account_id };
-        let pieces = self.builder_piece_counts.get(&key).copied().unwrap_or(0);
-        let earned = scaled_value(state.acc_per_piece_scaled.0, pieces);
+        let credits = self.builder_credit_counts.get(&key).copied().unwrap_or(0);
+        let earned = scaled_value(state.acc_per_credit_scaled.0, credits);
         NearToken::from_yoctonear(
             earned.saturating_sub(self.claimed.get(&key).copied().unwrap_or(0)),
         )
@@ -290,21 +316,83 @@ impl Contract {
         NearToken::from_yoctonear(self.treasury_balance)
     }
 
+    #[payable]
+    pub fn buy_credits(&mut self, credits: u16) -> u32 {
+        require!(credits > 0, "Credit purchase must be positive");
+        let account_id = env::predecessor_account_id();
+        let price = self
+            .config
+            .build_credit_price
+            .as_yoctonear()
+            .checked_mul(u128::from(credits))
+            .unwrap_or_else(|| env::panic_str("Credit purchase overflow"));
+        let storage_before = env::storage_usage();
+        let next_balance = self
+            .credit_balance(account_id.clone())
+            .checked_add(u32::from(credits))
+            .unwrap_or_else(|| env::panic_str("Credit balance overflow"));
+        self.credit_balances
+            .insert(account_id.clone(), next_balance);
+        self.credit_balances.flush();
+        let storage =
+            storage_cost(env::storage_usage().saturating_sub(storage_before)).as_yoctonear();
+        let required = price
+            .checked_add(storage)
+            .unwrap_or_else(|| env::panic_str("Credit purchase deposit overflow"));
+        let attached = env::attached_deposit().as_yoctonear();
+        require!(
+            attached >= required,
+            "Insufficient deposit for credits and storage"
+        );
+        self.treasury_balance = self
+            .treasury_balance
+            .checked_add(price)
+            .unwrap_or_else(|| env::panic_str("Treasury balance overflow"));
+        let refund = attached.saturating_sub(required);
+        if refund > 0 {
+            Promise::new(account_id.clone())
+                .transfer(NearToken::from_yoctonear(refund))
+                .detach();
+        }
+        emit_credits_purchased(&account_id, credits, price);
+        next_balance
+    }
+
+    pub fn update_economics(
+        &mut self,
+        allowance_per_day: u16,
+        build_credit_price: NearToken,
+        edition_price: NearToken,
+    ) {
+        require!(
+            env::predecessor_account_id() == self.config.treasury,
+            "Only the treasury can update economics"
+        );
+        validate_economics(allowance_per_day, build_credit_price, edition_price);
+        self.config.allowance_per_day = allowance_per_day;
+        self.config.build_credit_price = build_credit_price;
+        self.config.edition_price = edition_price;
+        emit_economics_updated(&self.config);
+    }
+
     pub fn finalize(&mut self, day: u64) -> DayState {
         require!(day < self.current_day(), "Day has not ended");
         require!(self.days.get(&day).is_none(), "Day is already finalized");
         let total_pieces = self.active_piece_counts.get(&day).copied().unwrap_or(0);
         require!(total_pieces > 0, "Cannot finalize an empty day");
+        let total_credits = self.active_credit_counts.get(&day).copied().unwrap_or(0);
 
         let finalized_at_ns = env::block_timestamp();
         let state = DayState {
             finalized_at_ns,
             sale_ends_at_ns: finalized_at_ns.saturating_add(self.config.edition_window_ns),
             total_pieces,
+            total_credits,
+            edition_price: self.config.edition_price,
             editions_minted: 0,
             proceeds: NearToken::from_yoctonear(0),
             builder_pool: NearToken::from_yoctonear(0),
-            acc_per_piece_scaled: U128(0),
+            acc_per_credit_scaled: U128(0),
             treasury_earned: NearToken::from_yoctonear(0),
             dust_swept: NearToken::from_yoctonear(0),
         };
@@ -325,7 +413,7 @@ impl Contract {
             "Edition sale has ended"
         );
 
-        let price = self.config.edition_price.as_yoctonear();
+        let price = state.edition_price.as_yoctonear();
         let attached = env::attached_deposit().as_yoctonear();
         require!(
             attached >= price,
@@ -370,7 +458,7 @@ impl Contract {
             .checked_mul(u128::from(self.config.builders_bps))
             .unwrap_or_else(|| env::panic_str("Builder share overflow"))
             / 10_000;
-        let acc_increment = scaled_per_piece(builder_target, state.total_pieces);
+        let acc_increment = scaled_per_piece(builder_target, state.total_credits);
         let treasury = price.saturating_sub(builder_target);
 
         state.editions_minted = serial;
@@ -381,9 +469,9 @@ impl Contract {
                 .checked_add(price)
                 .unwrap_or_else(|| env::panic_str("Proceeds overflow")),
         );
-        state.acc_per_piece_scaled = U128(
+        state.acc_per_credit_scaled = U128(
             state
-                .acc_per_piece_scaled
+                .acc_per_credit_scaled
                 .0
                 .checked_add(acc_increment)
                 .unwrap_or_else(|| env::panic_str("Reward accumulator overflow")),
@@ -428,7 +516,7 @@ impl Contract {
             env::block_timestamp() >= state.sale_ends_at_ns,
             "Edition sale is still open"
         );
-        let maximum_liability = scaled_value(state.acc_per_piece_scaled.0, state.total_pieces);
+        let maximum_liability = scaled_value(state.acc_per_credit_scaled.0, state.total_credits);
         let total_dust = state
             .builder_pool
             .as_yoctonear()
@@ -552,18 +640,26 @@ impl Contract {
         };
         let used = self.allowance_used.get(&key).copied().unwrap_or(0);
         let requested = u16::try_from(placements.len()).expect("batch size fits in u16");
-        require!(
-            used.saturating_add(requested) <= self.config.allowance_per_day,
-            "Daily piece allowance exceeded"
-        );
+        let free = requested.min(self.config.allowance_per_day.saturating_sub(used));
+        let paid_credits = placements
+            .iter()
+            .skip(usize::from(free))
+            .try_fold(0_u32, |total, placement| {
+                total.checked_add(u32::from(placement_credits(placement.shape)))
+            })
+            .unwrap_or_else(|| env::panic_str("Build credit total overflow"));
+        let balance = self.credit_balance(owner.clone());
+        require!(balance >= paid_credits, "Not enough build credits");
 
         let storage_before = env::storage_usage();
         let mut ids = Vec::with_capacity(placements.len());
         for placement in placements {
             ids.push(self.place_one(day, &owner, placement));
         }
-        self.allowance_used
-            .insert(key, used.saturating_add(requested));
+        self.allowance_used.insert(key, used.saturating_add(free));
+        if paid_credits > 0 {
+            self.credit_balances.insert(owner, balance - paid_credits);
+        }
         self.charge_storage(day, storage_before);
 
         ids
@@ -593,6 +689,14 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("Missing day piece count"));
         self.active_piece_counts
             .insert(piece.day, active.saturating_sub(1));
+        let credits = u32::from(placement_credits(piece.placement.shape));
+        let active_credits = self
+            .active_credit_counts
+            .get(&piece.day)
+            .copied()
+            .unwrap_or_else(|| env::panic_str("Missing day credit count"));
+        self.active_credit_counts
+            .insert(piece.day, active_credits.saturating_sub(credits));
         let builder_key = DayAccountKey {
             day: piece.day,
             account_id: piece.owner.clone(),
@@ -604,11 +708,24 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("Missing builder piece count"));
         self.builder_piece_counts
             .insert(builder_key, builder_pieces.saturating_sub(1));
+        let builder_credit_key = DayAccountKey {
+            day: piece.day,
+            account_id: piece.owner.clone(),
+        };
+        let builder_credits = self
+            .builder_credit_counts
+            .get(&builder_credit_key)
+            .copied()
+            .unwrap_or_else(|| env::panic_str("Missing builder credit count"));
+        self.builder_credit_counts
+            .insert(builder_credit_key, builder_credits.saturating_sub(credits));
         emit_piece_removed(&piece);
         self.pieces.flush();
         self.occupied.flush();
         self.active_piece_counts.flush();
+        self.active_credit_counts.flush();
         self.builder_piece_counts.flush();
+        self.builder_credit_counts.flush();
 
         let released = storage_before.saturating_sub(env::storage_usage());
         if released > 0 {
@@ -796,6 +913,29 @@ impl Contract {
                 .checked_add(1)
                 .unwrap_or_else(|| env::panic_str("Builder piece count overflow")),
         );
+        let credits = u32::from(placement_credits(placement.shape));
+        let active_credits = self.active_credit_counts.get(&day).copied().unwrap_or(0);
+        self.active_credit_counts.insert(
+            day,
+            active_credits
+                .checked_add(credits)
+                .unwrap_or_else(|| env::panic_str("Day credit count overflow")),
+        );
+        let builder_credit_key = DayAccountKey {
+            day,
+            account_id: owner.clone(),
+        };
+        let builder_credits = self
+            .builder_credit_counts
+            .get(&builder_credit_key)
+            .copied()
+            .unwrap_or(0);
+        self.builder_credit_counts.insert(
+            builder_credit_key,
+            builder_credits
+                .checked_add(credits)
+                .unwrap_or_else(|| env::panic_str("Builder credit count overflow")),
+        );
         emit_piece_placed(&piece);
 
         id
@@ -806,7 +946,10 @@ impl Contract {
         self.occupied.flush();
         self.allowance_used.flush();
         self.active_piece_counts.flush();
+        self.active_credit_counts.flush();
         self.builder_piece_counts.flush();
+        self.builder_credit_counts.flush();
+        self.credit_balances.flush();
         self.day_piece_ids
             .get_mut(&day)
             .expect("day piece index exists after placement")
@@ -847,6 +990,12 @@ struct Shape {
     voxels: &'static [(i8, i8, i8)],
 }
 
+impl Shape {
+    fn credits(&self) -> u16 {
+        u16::try_from(self.voxels.len()).expect("shape voxel count fits in u16")
+    }
+}
+
 const SHAPES: &[Shape] = &[
     Shape {
         id: 0,
@@ -875,13 +1024,19 @@ const SHAPES: &[Shape] = &[
     },
     Shape {
         id: 5,
-        name: "1x2 slope",
-        voxels: BRICK_1X2,
+        name: "1x1 slope",
+        voxels: BRICK_1X1,
     },
 ];
 
 fn shape(shape_id: u8) -> Option<&'static Shape> {
     SHAPES.iter().find(|shape| shape.id == shape_id)
+}
+
+fn placement_credits(shape_id: u8) -> u16 {
+    shape(shape_id)
+        .unwrap_or_else(|| env::panic_str("Unknown shape"))
+        .credits()
 }
 
 fn occupied_voxels(day: u64, placement: Placement) -> Vec<VoxelKey> {
@@ -971,20 +1126,12 @@ fn validate_config(config: &Config) {
         config.edition_window_ns <= MAX_EDITION_WINDOW_NS,
         "Edition window exceeds 7 days"
     );
-    require!(config.allowance_per_day > 0, "Allowance must be positive");
-    require!(
-        config.allowance_per_day <= MAX_ALLOWANCE,
-        "Allowance is too large"
+    validate_economics(
+        config.allowance_per_day,
+        config.build_credit_price,
+        config.edition_price,
     );
     require!(config.builders_bps == 9_000, "Builder share must be 90%");
-    require!(
-        !config.edition_price.is_zero(),
-        "Edition price must be positive"
-    );
-    require!(
-        config.edition_price <= NearToken::from_near(100),
-        "Edition price exceeds 100 NEAR"
-    );
     require!(
         config.plot_size.x > 0 && config.plot_size.y > 0 && config.plot_size.z > 0,
         "Plot dimensions must be positive"
@@ -992,6 +1139,27 @@ fn validate_config(config: &Config) {
     require!(
         config.plot_size.x <= 64 && config.plot_size.y <= 64 && config.plot_size.z <= 64,
         "Plot dimensions exceed 64 voxels"
+    );
+}
+
+fn validate_economics(
+    allowance_per_day: u16,
+    build_credit_price: NearToken,
+    edition_price: NearToken,
+) {
+    require!(allowance_per_day <= MAX_ALLOWANCE, "Allowance is too large");
+    require!(
+        !build_credit_price.is_zero(),
+        "Build credit price must be positive"
+    );
+    require!(
+        build_credit_price <= MAX_BUILD_CREDIT_PRICE,
+        "Build credit price exceeds 10 NEAR"
+    );
+    require!(!edition_price.is_zero(), "Edition price must be positive");
+    require!(
+        edition_price <= NearToken::from_near(100),
+        "Edition price exceeds 100 NEAR"
     );
 }
 
@@ -1028,6 +1196,21 @@ fn emit_withdrawn(day: u64, account_id: &AccountId, amount: u128) {
     ));
 }
 
+fn emit_credits_purchased(account_id: &AccountId, credits: u16, amount: u128) {
+    env::log_str(&format!(
+        "EVENT_JSON:{{\"standard\":\"daily_build\",\"version\":\"1.0.0\",\"event\":\"credits_purchased\",\"data\":[{{\"account_id\":\"{account_id}\",\"credits\":\"{credits}\",\"amount\":\"{amount}\"}}]}}"
+    ));
+}
+
+fn emit_economics_updated(config: &Config) {
+    env::log_str(&format!(
+        "EVENT_JSON:{{\"standard\":\"daily_build\",\"version\":\"1.0.0\",\"event\":\"economics_updated\",\"data\":[{{\"allowance_per_day\":\"{}\",\"build_credit_price\":\"{}\",\"edition_price\":\"{}\"}}]}}",
+        config.allowance_per_day,
+        config.build_credit_price.as_yoctonear(),
+        config.edition_price.as_yoctonear()
+    ));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1044,6 +1227,7 @@ mod tests {
             epoch_len_ns: EPOCH_NS,
             edition_window_ns: 86_400_000_000_000,
             edition_price: NearToken::from_near(1),
+            build_credit_price: NearToken::from_millinear(10),
             allowance_per_day,
             plot_size: PlotSize { x: 8, y: 8, z: 8 },
             builders_bps: 9_000,
@@ -1086,6 +1270,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn treasury_can_update_bounded_economics() {
+        let mut contract = contract(1);
+        testing_env!(context(accounts(5), 1_000).build());
+
+        contract.update_economics(
+            2,
+            NearToken::from_millinear(20),
+            NearToken::from_millinear(100),
+        );
+
+        assert_eq!(contract.config.allowance_per_day, 2);
+        assert_eq!(
+            contract.config.build_credit_price,
+            NearToken::from_millinear(20)
+        );
+    }
+
     fn placement(shape: u8, rotation: u8, x: u8, y: u8, z: u8) -> Placement {
         Placement {
             shape,
@@ -1118,6 +1320,15 @@ mod tests {
         assert_eq!(contract.voxel_piece(0, 2, 1, 2), Some(top));
         assert_eq!(contract.voxel_piece(0, 3, 1, 2), Some(top));
         assert_eq!(contract.pieces(0, 0, 10).len(), 2);
+    }
+
+    #[test]
+    fn slope_occupies_one_voxel() {
+        let mut contract = contract(1);
+        let piece_id = contract.place(placement(5, 0, 2, 0, 2));
+
+        assert_eq!(contract.voxel_piece(0, 2, 0, 2), Some(piece_id));
+        assert_eq!(contract.voxel_piece(0, 3, 0, 2), None);
     }
 
     #[test]
@@ -1175,11 +1386,17 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Daily piece allowance exceeded")]
-    fn enforces_daily_allowance() {
+    fn purchased_credits_carry_and_pay_for_later_pieces() {
         let mut contract = contract(1);
         contract.place(placement(0, 0, 0, 0, 0));
-        contract.place(placement(0, 0, 1, 0, 0));
+        contract.buy_credits(8);
+        assert_eq!(contract.credit_balance(accounts(1)), 8);
+
+        contract.place(placement(3, 0, 1, 0, 0));
+
+        assert_eq!(contract.treasury_balance(), NearToken::from_millinear(80));
+        assert_eq!(contract.credit_balance(accounts(1)), 0);
+        assert_eq!(contract.allowance_left(accounts(1), None), 0);
     }
 
     #[test]
@@ -1191,6 +1408,14 @@ mod tests {
         testing_env!(zero_deposit.build());
 
         contract.place(placement(0, 0, 0, 0, 0));
+    }
+
+    #[test]
+    #[should_panic(expected = "Not enough build credits")]
+    fn second_piece_requires_purchased_credits() {
+        let mut contract = contract(1);
+        contract.place(placement(0, 0, 0, 0, 0));
+        contract.place(placement(0, 0, 1, 0, 0));
     }
 
     #[test]
@@ -1283,6 +1508,21 @@ mod tests {
                     .iter()
                     .any(|action| matches!(action, MockAction::Transfer { .. }))
         }));
+    }
+
+    #[test]
+    fn edition_rewards_follow_shape_credit_weight() {
+        let mut contract = contract(1);
+        contract.place(placement(3, 0, 0, 0, 0));
+        testing_env!(context(accounts(2), 1_000).build());
+        contract.place(placement(0, 0, 4, 0, 0));
+        testing_env!(context(accounts(3), 1_000 + EPOCH_NS).build());
+        contract.finalize(0);
+        contract.collect(0);
+
+        let large_piece = contract.claimable(0, accounts(1)).as_yoctonear();
+        let small_piece = contract.claimable(0, accounts(2)).as_yoctonear();
+        assert_eq!(large_piece, small_piece * 8);
     }
 
     #[test]
