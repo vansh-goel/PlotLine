@@ -4,8 +4,9 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useState } from "react";
 import { useNearWallet } from "near-connect-hooks";
 import { parseConfig, parsePieces, type ChainConfig, type ChainPiece } from "@/lib/contract";
-import { PALETTE, SHAPES, themeForDay, type Placement } from "@/lib/plot";
+import { PALETTE, SHAPES, samePlacement, themeForDay, type Placement } from "@/lib/plot";
 import { walletMessage } from "@/lib/wallet";
+import { rpcMessage } from "@/lib/network";
 import { BuildChat } from "./build-chat";
 
 const PlotScene = dynamic(() => import("./plot-scene"), {
@@ -23,10 +24,12 @@ export function TodayPlot() {
   const [dayEndMs, setDayEndMs] = useState(0);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [pieces, setPieces] = useState<ChainPiece[] | null>(null);
-  const [config, setConfig] = useState<ChainConfig>({ allowance_per_day: 1, build_credit_price: "10000000000000000000000", plot_size: { x: 12, y: 12, z: 12 } });
+  const [config, setConfig] = useState<ChainConfig>({ allowance_per_day: 1, build_credit_price: "10000000000000000000000", plot_size: { x: 32, y: 24, z: 32 } });
   const [allowance, setAllowance] = useState<number | null>(null);
   const [credits, setCredits] = useState<number | null>(null);
   const [ghost, setGhost] = useState<{ placement: Placement; valid: boolean; reason?: string } | null>(null);
+  const [pendingPlacement, setPendingPlacement] = useState<Placement | null>(null);
+  const [pendingConfirmed, setPendingConfirmed] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "placing" | "buying" | "removing" | "error">("idle");
   const [message, setMessage] = useState("");
 
@@ -44,7 +47,9 @@ export function TodayPlot() {
       setDay(currentDay);
       setDayEndMs(rawDayEnd === null ? 0 : Number(rawDayEnd) / 1_000_000);
       setConfig(nextConfig);
-      setPieces(parsePieces(rawPieces));
+      const nextPieces = parsePieces(rawPieces);
+      setPieces(nextPieces);
+      setPendingPlacement((pending) => pending && nextPieces.some((piece) => piece.owner === signedAccountId && samePlacement(piece.placement, pending)) ? null : pending);
       if (signedAccountId) {
         const [left, balance] = await Promise.all([
           viewFunction({ contractId, method: "allowance_left", args: { account_id: signedAccountId, day: currentDay } }),
@@ -60,7 +65,7 @@ export function TodayPlot() {
       setMessage("");
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Could not read the contract");
+      setMessage(rpcMessage(error, "Could not read the contract"));
     }
   }, [contractId, signedAccountId, viewFunction]);
 
@@ -85,13 +90,15 @@ export function TodayPlot() {
   }, []);
 
   const place = async () => {
-    if (status === "placing" || status === "buying" || status === "removing") return;
+    if (status === "placing" || status === "buying" || status === "removing" || pendingPlacement) return;
     if (!signedAccountId) {
       try { await signIn(); } catch (error) { setMessage(walletMessage(error, "Could not connect wallet")); }
       return;
     }
     if (!ghost?.valid || !contractId) return;
     setStatus("placing");
+    setPendingPlacement(ghost.placement);
+    setPendingConfirmed(false);
     setMessage("Confirm the placement in your wallet");
     try {
       await callFunction({
@@ -101,9 +108,12 @@ export function TodayPlot() {
         gas: "30000000000000",
         deposit: "50000000000000000000000",
       });
-      setMessage("Piece placed. Refreshing the plot…");
+      setPendingConfirmed(true);
+      setMessage("Piece placed. Syncing the on-chain plot…");
       await refresh();
     } catch (error) {
+      setPendingPlacement(null);
+      setPendingConfirmed(false);
       setStatus("error");
       setMessage(walletMessage(error, "Placement was not completed"));
     }
@@ -182,6 +192,8 @@ export function TodayPlot() {
           demo={!contractId}
           size={config.plot_size}
           viewerId={signedAccountId}
+          pendingPlacement={pendingPlacement}
+          pendingConfirmed={pendingConfirmed}
           onPlacementChange={handlePlacementChange}
           onPlace={() => void place()}
           onRemovePiece={(piece) => void removePiece(piece.id)}
@@ -250,7 +262,7 @@ export function TodayPlot() {
         <button
           className="place-button"
           type="button"
-          disabled={status === "placing" || status === "buying" || lacksCredits || Boolean(signedAccountId && (!contractId || !ghost?.valid))}
+          disabled={status === "placing" || status === "buying" || Boolean(pendingPlacement) || lacksCredits || Boolean(signedAccountId && (!contractId || !ghost?.valid))}
           onClick={() => void place()}
         >
           {placeLabel}

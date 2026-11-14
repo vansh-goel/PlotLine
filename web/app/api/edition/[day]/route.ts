@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { PALETTE, occupiedVoxels } from "@/lib/plot";
 import { parsePieces } from "@/lib/contract";
-
-const RPC_URL = "https://rpc.testnet.near.org";
+import { createTestnetProvider } from "@/lib/network";
 
 const shade = (hex: string, factor: number) => {
   const value = Number.parseInt(hex.slice(1), 16);
@@ -15,16 +14,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ day
   const contractId = process.env.NEXT_PUBLIC_CONTRACT_ID?.trim();
   if (!contractId) return NextResponse.json({ error: "Contract is not configured" }, { status: 503 });
 
-  const rpc = await fetch(RPC_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: "plotline-edition", method: "query", params: { request_type: "call_function", finality: "final", account_id: contractId, method_name: "pieces", args_base64: Buffer.from(JSON.stringify({ day, from_index: 0, limit: 100 })).toString("base64") } }),
-    next: { revalidate: 30 },
-  });
-  const payload = await rpc.json() as { result?: { result?: number[] }; error?: unknown };
-  if (!rpc.ok || !payload.result?.result) return NextResponse.json({ error: "Could not load edition" }, { status: 502 });
   // shortcut: edition media renders the first 100 pieces; paginate when plots regularly exceed that.
-  const pieces = parsePieces(JSON.parse(Buffer.from(payload.result.result).toString("utf8")) as unknown);
+  const pieces = parsePieces(await createTestnetProvider().callFunction<unknown[]>({ contractId, method: "pieces", args: { day, from_index: 0, limit: 100 } }));
   const cells = pieces.flatMap((piece) => occupiedVoxels(piece.placement).map((voxel) => ({ ...voxel, color: PALETTE[piece.placement.color] })))
     .sort((a, b) => a.x + a.z + a.y - (b.x + b.z + b.y));
   const cubes = cells.map(({ x, y, z, color }) => {

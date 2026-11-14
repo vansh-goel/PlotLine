@@ -34,6 +34,9 @@ export const THEMES = [
 
 export const themeForDay = (day: number) => THEMES[((day % THEMES.length) + THEMES.length) % THEMES.length];
 
+export const samePlacement = (left: Placement, right: Placement) =>
+  left.shape === right.shape && left.rotation === right.rotation && left.x === right.x && left.y === right.y && left.z === right.z && left.color === right.color;
+
 const rotate = ([x, y, z]: readonly number[], rotation: number): Voxel => {
   if (rotation === 1) return { x: z, y, z: -x };
   if (rotation === 2) return { x: -x, y, z: -z };

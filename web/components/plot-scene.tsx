@@ -122,6 +122,8 @@ export default function PlotScene({
   demo,
   size,
   viewerId,
+  pendingPlacement,
+  pendingConfirmed,
   onPlacementChange,
   onPlace,
   onRemovePiece,
@@ -133,6 +135,8 @@ export default function PlotScene({
   demo: boolean;
   size: { x: number; y: number; z: number };
   viewerId?: string;
+  pendingPlacement: Placement | null;
+  pendingConfirmed: boolean;
   onPlacementChange: (placement: Placement, valid: boolean, reason?: string) => void;
   onPlace: () => void;
   onRemovePiece: (piece: ChainPiece) => void;
@@ -218,7 +222,10 @@ export default function PlotScene({
         )),
       )}
       {demo && SAMPLE.flatMap((piece, pieceIndex) => occupiedVoxels(piece).map((voxel, voxelIndex) => <Cell key={`demo-${pieceIndex}-${voxelIndex}`} voxel={voxel} color={PALETTE[piece.color]} size={size} shape={piece.shape} rotation={piece.rotation} onSurface={moveGhost} />))}
-      {occupiedVoxels(ghost).map((voxel, index) => (
+      {pendingPlacement && occupiedVoxels(pendingPlacement).map((voxel, index) => (
+        <Cell key={`pending-${index}`} voxel={voxel} color={PALETTE[pendingPlacement.color]} size={size} shape={pendingPlacement.shape} rotation={pendingPlacement.rotation} valid ghost={!pendingConfirmed} />
+      ))}
+      {!pendingPlacement && occupiedVoxels(ghost).map((voxel, index) => (
         <Cell
           key={`ghost-${index}`}
           voxel={voxel}

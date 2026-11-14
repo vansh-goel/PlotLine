@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { occupiedVoxels, snapWorldPoint, themeForDay, validatePlacement, type Placement } from "./plot";
+import { occupiedVoxels, samePlacement, snapWorldPoint, themeForDay, validatePlacement, type Placement } from "./plot";
 
 const size = { x: 8, y: 8, z: 8 };
 const placement = (overrides: Partial<Placement> = {}): Placement => ({
@@ -47,5 +47,10 @@ describe("plot placement rules", () => {
     expect(themeForDay(0)).toBe("Creature from the canopy");
     expect(themeForDay(7)).toBe(themeForDay(0));
     expect(themeForDay(8)).not.toBe(themeForDay(0));
+  });
+
+  it("matches a pending placement to its confirmed chain placement", () => {
+    expect(samePlacement(placement(), placement())).toBe(true);
+    expect(samePlacement(placement(), placement({ color: 2 }))).toBe(false);
   });
 });

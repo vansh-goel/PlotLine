@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { Account, JsonRpcProvider, KeyPairSigner, type KeyPairString } from "near-api-js";
-
-const RPC_URL = "https://test.rpc.fastnear.com";
+import { Account, KeyPairSigner, type KeyPairString } from "near-api-js";
+import { createTestnetProvider } from "../../../../lib/network";
 
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
@@ -15,7 +14,7 @@ export async function GET(request: Request) {
   const privateKey = process.env.KEEPER_PRIVATE_KEY?.trim();
   if (!contractId || !keeperId || !privateKey) return NextResponse.json({ error: "Keeper is not configured" }, { status: 503 });
 
-  const provider = new JsonRpcProvider({ url: RPC_URL });
+  const provider = createTestnetProvider();
   const currentDay = await provider.callFunction<number>({ contractId, method: "current_day", args: {} });
   if (!currentDay) return NextResponse.json({ status: "nothing-ended" });
   const candidates: number[] = [];

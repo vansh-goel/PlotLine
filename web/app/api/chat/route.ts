@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { JsonRpcProvider, base64Decode } from "near-api-js";
+import { base64Decode } from "near-api-js";
 import { verifyMessage } from "near-api-js/nep413";
 import { redisCommand } from "@/lib/redis";
+import { createTestnetProvider } from "@/lib/network";
 
 const ACCOUNT_ID = /^[a-z0-9._-]{2,64}$/;
 const RECIPIENT = "plot-line-peach.vercel.app";
-const provider = new JsonRpcProvider({ url: "https://test.rpc.fastnear.com" });
+const provider = createTestnetProvider();
 type ChatMessage = { id: string; accountId: string; name?: string; message: string; imageUrl?: string; createdAt: number };
 
 export async function GET(request: NextRequest) {
