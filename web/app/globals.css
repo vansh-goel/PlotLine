@@ -79,6 +79,8 @@ legend { width: 100%; margin-bottom: 10px; font-size: 0.72rem; font-weight: 760;
 .shape-3 { width: 42px; height: 21px; }
 .shape-4 { border-radius: 50%; }
 .shape-5 { clip-path: polygon(0 100%, 100% 100%, 100% 0, 30% 0); }
+.shape-6 { width: 22px; height: 25px; border: 5px solid currentColor; border-left-color: transparent; border-radius: 50%; background: transparent; box-shadow: none; }
+.shape-7 { width: 28px; height: 6px; border-radius: 0; box-shadow: 0 -9px currentColor, 0 9px currentColor; }
 .palette { display: flex; gap: 7px; flex-wrap: wrap; }
 .palette button { width: 30px; height: 30px; border: 2px solid var(--paper); outline: 1px solid var(--rule); cursor: pointer; }
 .palette button[aria-pressed="true"] { outline: 3px solid var(--ink); outline-offset: 2px; }
@@ -92,6 +94,16 @@ kbd { padding: 1px 4px; border: 1px solid var(--rule); background: #fffaf0; font
 .contract-message.is-error { color: #9c2f26; }
 .split-note { margin-top: 16px; display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 0.68rem; }
 .split-note strong { color: var(--ink); text-align: right; }
+.owned-pieces { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--rule); }
+.owned-pieces > div { display: flex; align-items: baseline; justify-content: space-between; font-size: .76rem; }
+.owned-pieces > div span, .owned-pieces p, .owned-pieces small { color: var(--muted); }
+.owned-pieces p, .owned-pieces small { font-size: .68rem; line-height: 1.45; }
+.owned-pieces ul { margin: 10px 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.owned-pieces li { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--rule); font-size: .7rem; }
+.owned-pieces li span { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.owned-pieces li i { width: 10px; height: 10px; flex: 0 0 auto; border: 1px solid var(--ink); }
+.owned-pieces li button { min-height: 30px; padding: 0 9px; border: 1px solid var(--ink); background: transparent; cursor: pointer; font-size: .68rem; }
+.owned-pieces li button:disabled { cursor: wait; opacity: .55; }
 
 .build-chat { padding: 24px 28px 30px; border-top: 1px solid var(--ink); background: #e4dece; }
 .build-chat > header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
@@ -152,6 +164,15 @@ kbd { padding: 1px 4px; border: 1px solid var(--rule); background: #fffaf0; font
 .profile-form input { min-width: 0; padding: 13px; border: 1px solid var(--ink); background: #fffaf0; font: inherit; }
 .profile-form button, .profile-connect button { padding: 13px 18px; border: 0; background: var(--orange); color: white; font-weight: 760; cursor: pointer; }
 .profile-form small { display: block; margin-top: 10px; color: var(--muted); line-height: 1.5; }
+.earnings { margin-top: 64px; }
+.earnings h2 { font-size: 2rem; letter-spacing: -.03em; }
+.earnings ol { margin: 0; padding: 0; list-style: none; border-bottom: 1px solid var(--rule); }
+.earnings li { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--rule); }
+.earnings li:last-child { border-bottom: 0; }
+.earnings li div { display: grid; gap: 4px; }
+.earnings li span, .earnings-empty { color: var(--muted); }
+.earnings li button { min-height: 40px; padding: 0 16px; border: 0; background: var(--orange); color: white; cursor: pointer; font-weight: 760; }
+.earnings-empty { margin: 0; padding: 22px 0; border-bottom: 1px solid var(--rule); }
 .collection { margin-top: 72px; }
 .collection-heading { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--ink); }
 .collection h2 { font-size: 2rem; letter-spacing: -.03em; }

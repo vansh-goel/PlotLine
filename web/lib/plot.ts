@@ -13,12 +13,26 @@ export const SHAPES = [
   },
   { id: 4, name: "Cylinder", offsets: [[0, 0, 0]] },
   { id: 5, name: "Slope", offsets: [[0, 0, 0]] },
+  { id: 6, name: "Hook", offsets: [[0, 0, 0]] },
+  { id: 7, name: "Rotor", offsets: [[0, 0, 0]] },
 ] as const;
 
 export const PALETTE = [
   "#e5522e", "#f0b429", "#207a55", "#2573d9", "#6f4fc8", "#e988b4", "#efe8d8", "#252821",
   "#8c593d", "#77b9dd", "#89a94f", "#d8d0b7", "#f57b20", "#a7a9a3", "#7b3434", "#3c5268",
 ] as const;
+
+export const THEMES = [
+  "Creature from the canopy",
+  "A machine that gardens",
+  "Sky harbor at dusk",
+  "Tiny monument to rain",
+  "Deep-sea courier",
+  "Ruins with a heartbeat",
+  "Neighborhood on wheels",
+] as const;
+
+export const themeForDay = (day: number) => THEMES[((day % THEMES.length) + THEMES.length) % THEMES.length];
 
 const rotate = ([x, y, z]: readonly number[], rotation: number): Voxel => {
   if (rotation === 1) return { x: z, y, z: -x };

@@ -4,7 +4,8 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useState } from "react";
 import { useNearWallet } from "near-connect-hooks";
 import { parseConfig, parsePieces, type ChainConfig, type ChainPiece } from "@/lib/contract";
-import { PALETTE, SHAPES, type Placement } from "@/lib/plot";
+import { PALETTE, SHAPES, themeForDay, type Placement } from "@/lib/plot";
+import { walletMessage } from "@/lib/wallet";
 import { BuildChat } from "./build-chat";
 
 const PlotScene = dynamic(() => import("./plot-scene"), {
@@ -19,25 +20,29 @@ export function TodayPlot() {
   const [rotation, setRotation] = useState(0);
   const [color, setColor] = useState(0);
   const [day, setDay] = useState(0);
+  const [dayEndMs, setDayEndMs] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [pieces, setPieces] = useState<ChainPiece[] | null>(null);
   const [config, setConfig] = useState<ChainConfig>({ allowance_per_day: 1, build_credit_price: "10000000000000000000000", plot_size: { x: 12, y: 12, z: 12 } });
   const [allowance, setAllowance] = useState<number | null>(null);
   const [credits, setCredits] = useState<number | null>(null);
   const [ghost, setGhost] = useState<{ placement: Placement; valid: boolean; reason?: string } | null>(null);
-  const [status, setStatus] = useState<"idle" | "loading" | "placing" | "buying" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "loading" | "placing" | "buying" | "removing" | "error">("idle");
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
     if (!contractId) return;
-    setStatus((current) => current === "placing" || current === "buying" ? current : "loading");
+    setStatus((current) => current === "placing" || current === "buying" || current === "removing" ? current : "loading");
     try {
       const currentDay = Number(await viewFunction({ contractId, method: "current_day", args: {} }));
       const [rawConfig, rawPieces] = await Promise.all([
         viewFunction({ contractId, method: "config", args: {} }),
         viewFunction({ contractId, method: "pieces", args: { day: currentDay, from_index: 0, limit: 500 } }),
       ]);
+      const rawDayEnd = await viewFunction({ contractId, method: "day_ends_at_ns", args: { day: currentDay } }).catch(() => null);
       const nextConfig = parseConfig(rawConfig);
       setDay(currentDay);
+      setDayEndMs(rawDayEnd === null ? 0 : Number(rawDayEnd) / 1_000_000);
       setConfig(nextConfig);
       setPieces(parsePieces(rawPieces));
       if (signedAccountId) {
@@ -74,9 +79,14 @@ export function TodayPlot() {
     return () => window.removeEventListener("keydown", rotate);
   }, []);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const place = async () => {
     if (!signedAccountId) {
-      await signIn();
+      try { await signIn(); } catch (error) { setMessage(walletMessage(error, "Could not connect wallet")); }
       return;
     }
     if (!ghost?.valid || !contractId) return;
@@ -94,12 +104,15 @@ export function TodayPlot() {
       await refresh();
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Placement was not completed");
+      setMessage(walletMessage(error, "Placement was not completed"));
     }
   };
 
   const buyCredits = async () => {
-    if (!signedAccountId) { await signIn(); return; }
+    if (!signedAccountId) {
+      try { await signIn(); } catch (error) { setMessage(walletMessage(error, "Could not connect wallet")); }
+      return;
+    }
     const amount = 10;
     setStatus("buying");
     setMessage("Confirm 10 build credits in your wallet");
@@ -115,13 +128,30 @@ export function TodayPlot() {
       setMessage("10 build credits added");
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Credits were not purchased");
+      setMessage(walletMessage(error, "Credits were not purchased"));
+    }
+  };
+
+  const removePiece = async (pieceId: number | string) => {
+    setStatus("removing");
+    setMessage(`Confirm removal of piece ${pieceId}`);
+    try {
+      await callFunction({ contractId, method: "remove", args: { piece_id: Number(pieceId) }, gas: "30000000000000", deposit: "0" });
+      await refresh();
+      setMessage(`Piece ${pieceId} removed. Its storage refund was returned.`);
+    } catch (error) {
+      setStatus("error");
+      setMessage(walletMessage(error, "Piece was not removed"));
     }
   };
 
   const selectedCost = SHAPES.find((candidate) => candidate.id === shape)?.offsets.length ?? 0;
   const needsCredits = signedAccountId && allowance === 0;
   const lacksCredits = Boolean(needsCredits && (credits ?? 0) < selectedCost);
+  const ownedPieces = pieces?.filter((piece) => piece.owner === signedAccountId) ?? [];
+  const secondsLeft = Math.max(0, Math.ceil((dayEndMs - nowMs) / 1_000));
+  const countdown = [Math.floor(secondsLeft / 3_600), Math.floor(secondsLeft % 3_600 / 60), secondsLeft % 60]
+    .map((value) => String(value).padStart(2, "0")).join(":");
 
   const placeLabel = !contractId
     ? "Add contract ID to enable placement"
@@ -159,8 +189,8 @@ export function TodayPlot() {
       <aside className="workbench" aria-label="Piece placement controls">
         <div className="theme-block">
           <p>Today’s build</p>
-          <h1>Creature from the canopy</h1>
-          <div className="time-row"><strong>04:38:12</strong><span>until the plot closes</span></div>
+          <h1>{themeForDay(day)}</h1>
+          <div className="time-row"><strong>{dayEndMs ? countdown : "—"}</strong><span>until the plot closes</span></div>
         </div>
 
         <div className="field-row">
@@ -227,6 +257,8 @@ export function TodayPlot() {
           <span>Edition proceeds</span>
           <strong>90% builders · 10% treasury</strong>
         </div>
+
+        {signedAccountId && <section className="owned-pieces"><div><strong>Your pieces today</strong><span>{ownedPieces.length}</span></div>{ownedPieces.length === 0 ? <p>Nothing placed yet.</p> : <ul>{ownedPieces.map((piece) => <li key={piece.id}><span><i style={{ background: PALETTE[piece.placement.color] }} />#{piece.id} · {SHAPES.find((candidate) => candidate.id === piece.placement.shape)?.name ?? "Piece"}</span><button disabled={status === "removing"} onClick={() => void removePiece(piece.id)} type="button">Remove</button></li>)}</ul>}<small>Removal does not restore the free placement or spent credits.</small></section>}
       </aside>
       <BuildChat day={day} />
       </div>

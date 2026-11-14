@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useNearWallet } from "near-connect-hooks";
+import { walletMessage } from "@/lib/wallet";
 
 type Message = { id: string; accountId: string; name?: string; message: string; imageUrl?: string; createdAt: number };
 
@@ -27,7 +28,10 @@ export function BuildChat({ day }: { day: number }) {
 
   const post = async (event: FormEvent) => {
     event.preventDefault();
-    if (!signedAccountId) { await signIn(); return; }
+    if (!signedAccountId) {
+      try { await signIn(); } catch (error) { setStatus(walletMessage(error, "Could not connect wallet")); }
+      return;
+    }
     const message = draft.trim();
     const image = imageUrl.trim();
     if (!message && !image) return;
@@ -46,7 +50,7 @@ export function BuildChat({ day }: { day: number }) {
       setStatus("");
       await load();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Message was not posted");
+      setStatus(walletMessage(error, "Message was not posted"));
     }
   };
 

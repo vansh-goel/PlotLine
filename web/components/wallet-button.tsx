@@ -10,7 +10,7 @@ export function WalletButton() {
     <button
       className="wallet-button"
       disabled={loading}
-      onClick={() => void (signedAccountId ? signOut() : signIn())}
+      onClick={() => void (signedAccountId ? signOut() : signIn()).catch(() => undefined)}
       type="button"
     >
       <span className="wallet-status" aria-hidden="true" />

@@ -75,6 +75,28 @@ function Cell({ voxel, color, size, shape, rotation, ghost = false, valid, onSur
         <mesh castShadow receiveShadow geometry={wedgeGeometry} rotation={[0, -rotation * Math.PI / 2, 0]}>
           <Material color={color} ghost={ghost} valid={valid} />
         </mesh>
+      ) : shape === 6 ? (
+        <group rotation={[0, -rotation * Math.PI / 2, 0]}>
+          <mesh castShadow position={[0, 0.52, 0]}>
+            <torusGeometry args={[0.28, 0.09, 12, 28, Math.PI * 1.55]} />
+            <Material color={color} ghost={ghost} valid={valid} />
+          </mesh>
+          <mesh castShadow position={[-0.28, 0.22, 0]}>
+            <cylinderGeometry args={[0.09, 0.09, 0.48, 16]} />
+            <Material color={color} ghost={ghost} valid={valid} />
+          </mesh>
+        </group>
+      ) : shape === 7 ? (
+        <group position={[0, 0.45, 0]} rotation={[0, -rotation * Math.PI / 2, 0]}>
+          <mesh castShadow rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.15, 0.15, 0.2, 20]} />
+            <Material color={color} ghost={ghost} valid={valid} />
+          </mesh>
+          {[0, 1, 2].map((blade) => <mesh castShadow key={blade} position={[Math.cos(blade * Math.PI * 2 / 3) * .25, 0, Math.sin(blade * Math.PI * 2 / 3) * .25]} rotation={[0, -blade * Math.PI * 2 / 3, 0]}>
+            <boxGeometry args={[0.5, 0.1, 0.16]} />
+            <Material color={color} ghost={ghost} valid={valid} />
+          </mesh>)}
+        </group>
       ) : (
         <>
           <mesh castShadow receiveShadow position={[0, 0.4, 0]}>

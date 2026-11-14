@@ -236,6 +236,13 @@ impl Contract {
         env::block_timestamp().saturating_sub(self.genesis_ns) / self.config.epoch_len_ns
     }
 
+    pub fn day_ends_at_ns(&self, day: u64) -> u64 {
+        self.genesis_ns.saturating_add(
+            day.saturating_add(1)
+                .saturating_mul(self.config.epoch_len_ns),
+        )
+    }
+
     pub fn shapes(&self) -> Vec<ShapeView> {
         SHAPES
             .iter()
@@ -375,8 +382,25 @@ impl Contract {
         emit_economics_updated(&self.config);
     }
 
+    pub fn update_keeper(&mut self, keeper: AccountId) {
+        require!(
+            env::predecessor_account_id() == self.config.treasury,
+            "Only the treasury can update the keeper"
+        );
+        self.config.keeper = Some(keeper);
+    }
+
     pub fn finalize(&mut self, day: u64) -> DayState {
         require!(day < self.current_day(), "Day has not ended");
+        let keeper = self
+            .config
+            .keeper
+            .as_ref()
+            .unwrap_or_else(|| env::panic_str("Keeper is not configured"));
+        require!(
+            env::predecessor_account_id() == *keeper,
+            "Only the keeper can finalize"
+        );
         require!(self.days.get(&day).is_none(), "Day is already finalized");
         let total_pieces = self.active_piece_counts.get(&day).copied().unwrap_or(0);
         require!(total_pieces > 0, "Cannot finalize an empty day");
@@ -1027,6 +1051,16 @@ const SHAPES: &[Shape] = &[
         name: "1x1 slope",
         voxels: BRICK_1X1,
     },
+    Shape {
+        id: 6,
+        name: "1x1 hook",
+        voxels: BRICK_1X1,
+    },
+    Shape {
+        id: 7,
+        name: "1x1 rotor",
+        voxels: BRICK_1X1,
+    },
 ];
 
 fn shape(shape_id: u8) -> Option<&'static Shape> {
@@ -1223,7 +1257,7 @@ mod tests {
     fn config(allowance_per_day: u16) -> Config {
         Config {
             treasury: accounts(5),
-            keeper: None,
+            keeper: Some(accounts(3)),
             epoch_len_ns: EPOCH_NS,
             edition_window_ns: 86_400_000_000_000,
             edition_price: NearToken::from_near(1),
@@ -1288,6 +1322,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn treasury_can_update_keeper() {
+        let mut contract = contract(1);
+        testing_env!(context(accounts(5), 1_000).build());
+
+        contract.update_keeper(accounts(4));
+
+        assert_eq!(contract.config.keeper, Some(accounts(4)));
+    }
+
+    #[test]
+    #[should_panic(expected = "Only the treasury can update the keeper")]
+    fn non_treasury_cannot_update_keeper() {
+        let mut contract = contract(1);
+        contract.update_keeper(accounts(4));
+    }
+
     fn placement(shape: u8, rotation: u8, x: u8, y: u8, z: u8) -> Placement {
         Placement {
             shape,
@@ -1329,6 +1380,18 @@ mod tests {
 
         assert_eq!(contract.voxel_piece(0, 2, 0, 2), Some(piece_id));
         assert_eq!(contract.voxel_piece(0, 3, 0, 2), None);
+    }
+
+    #[test]
+    fn advanced_parts_each_occupy_one_voxel() {
+        let mut contract = contract(2);
+        let hook = contract.place(placement(6, 0, 2, 0, 2));
+        let rotor = contract.place(placement(7, 1, 3, 0, 2));
+
+        assert_eq!(contract.voxel_piece(0, 2, 0, 2), Some(hook));
+        assert_eq!(contract.voxel_piece(0, 3, 0, 2), Some(rotor));
+        assert_eq!(contract.shapes()[6].credits, 1);
+        assert_eq!(contract.shapes()[7].credits, 1);
     }
 
     #[test]
@@ -1383,6 +1446,13 @@ mod tests {
         assert_eq!(contract.current_day(), 1);
         assert_eq!(contract.allowance_left(accounts(1), None), 1);
         contract.place(placement(0, 0, 0, 0, 0));
+    }
+
+    #[test]
+    fn reports_the_current_day_end_time() {
+        let contract = contract(1);
+        assert_eq!(contract.day_ends_at_ns(0), 1_000 + EPOCH_NS);
+        assert_eq!(contract.day_ends_at_ns(1), 1_000 + EPOCH_NS * 2);
     }
 
     #[test]
@@ -1444,6 +1514,16 @@ mod tests {
     fn finalize_rejects_current_day() {
         let mut contract = contract(1);
         contract.place(placement(0, 0, 0, 0, 0));
+        contract.finalize(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Only the keeper can finalize")]
+    fn random_account_cannot_finalize() {
+        let mut contract = contract(1);
+        contract.place(placement(0, 0, 0, 0, 0));
+        testing_env!(context(accounts(2), 1_000 + EPOCH_NS).build());
+
         contract.finalize(0);
     }
 
