@@ -85,6 +85,7 @@ export function TodayPlot() {
   }, []);
 
   const place = async () => {
+    if (status === "placing" || status === "buying" || status === "removing") return;
     if (!signedAccountId) {
       try { await signIn(); } catch (error) { setMessage(walletMessage(error, "Could not connect wallet")); }
       return;
@@ -180,8 +181,12 @@ export function TodayPlot() {
           pieces={pieces}
           demo={!contractId}
           size={config.plot_size}
+          viewerId={signedAccountId}
           onPlacementChange={handlePlacementChange}
+          onPlace={() => void place()}
+          onRemovePiece={(piece) => void removePiece(piece.id)}
         />
+        <div className="scene-controls" aria-label="Plot controls"><span><kbd>Left click</kbd> place</span><span><kbd>Right click</kbd> remove yours</span><span><kbd>Drag</kbd> orbit / pan</span><span><kbd>R</kbd> rotate</span></div>
         <div className="scene-note"><span className="live-dot" /> {contractId ? `Live day ${day}` : "Demo composition"} · drag to orbit</div>
       </section>
 

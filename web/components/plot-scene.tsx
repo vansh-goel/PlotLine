@@ -2,7 +2,7 @@
 
 import { ContactShadows, OrbitControls } from "@react-three/drei";
 import { Canvas, type ThreeEvent } from "@react-three/fiber";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { ChainPiece } from "@/lib/contract";
 import { PALETTE, occupiedVoxels, snapWorldPoint, validatePlacement, type Placement, type Voxel } from "@/lib/plot";
@@ -40,6 +40,7 @@ type CellProps = {
   ghost?: boolean;
   valid?: boolean;
   onSurface?: (event: ThreeEvent<PointerEvent>) => void;
+  onRemove?: (event: ThreeEvent<MouseEvent>) => void;
 };
 
 function Material({ color, ghost, valid }: Pick<CellProps, "color" | "ghost" | "valid">) {
@@ -56,10 +57,10 @@ function Material({ color, ghost, valid }: Pick<CellProps, "color" | "ghost" | "
   );
 }
 
-function Cell({ voxel, color, size, shape, rotation, ghost = false, valid, onSurface }: CellProps) {
+function Cell({ voxel, color, size, shape, rotation, ghost = false, valid, onSurface, onRemove }: CellProps) {
   const interactive = ghost ? undefined : onSurface;
   return (
-    <group position={[voxel.x - size.x / 2 + 0.5, voxel.y + 0.02, voxel.z - size.z / 2 + 0.5]} onPointerMove={interactive}>
+    <group position={[voxel.x - size.x / 2 + 0.5, voxel.y + 0.02, voxel.z - size.z / 2 + 0.5]} onContextMenu={ghost ? undefined : onRemove} onPointerMove={interactive}>
       {shape === 4 ? (
         <>
           <mesh castShadow receiveShadow position={[0, 0.4, 0]}>
@@ -120,7 +121,10 @@ export default function PlotScene({
   pieces,
   demo,
   size,
+  viewerId,
   onPlacementChange,
+  onPlace,
+  onRemovePiece,
 }: {
   selected: number;
   rotation: number;
@@ -128,12 +132,16 @@ export default function PlotScene({
   pieces: ChainPiece[] | null;
   demo: boolean;
   size: { x: number; y: number; z: number };
+  viewerId?: string;
   onPlacementChange: (placement: Placement, valid: boolean, reason?: string) => void;
+  onPlace: () => void;
+  onRemovePiece: (piece: ChainPiece) => void;
 }) {
   const placements = pieces?.map((piece) => piece.placement) ?? (demo ? SAMPLE : []);
   const extent = Math.max(size.x, size.z);
   const occupied = useMemo(() => placements.flatMap(occupiedVoxels), [placements]);
   const [origin, setOrigin] = useState({ x: 1, y: 0, z: 1 });
+  const pointerStart = useRef<{ button: number; x: number; y: number } | null>(null);
   const ghost = { ...origin, shape: selected, rotation, color };
   const verdict = validatePlacement(ghost, size, occupied);
 
@@ -153,6 +161,22 @@ export default function PlotScene({
   };
 
   return (
+    <div
+      className="plot-canvas"
+      onClick={(event) => {
+        const start = pointerStart.current;
+        pointerStart.current = null;
+        if (start?.button === 0 && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 4 && verdict.valid) onPlace();
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        pointerStart.current = null;
+      }}
+      onPointerCancel={() => { pointerStart.current = null; }}
+      onPointerDown={(event) => {
+        pointerStart.current = { button: event.button, x: event.clientX, y: event.clientY };
+      }}
+    >
     <Canvas key={`${size.x}-${size.y}-${size.z}`} camera={{ position: [extent * 0.75, extent * 0.72, extent * 0.85], fov: 38 }} shadows dpr={[1, 1.75]}>
       <color attach="background" args={["#dcd5c3"]} />
       <ambientLight intensity={1.7} />
@@ -172,19 +196,28 @@ export default function PlotScene({
         <meshStandardMaterial color="#496f4d" roughness={0.78} />
       </mesh>
       <gridHelper args={[Math.max(size.x, size.z), Math.max(size.x, size.z), "#dae2cf", "#739071"]} position={[0, 0.01, 0]} />
-      {placements.flatMap((piece, pieceIndex) =>
-        occupiedVoxels(piece).map((voxel, voxelIndex) => (
+      {(pieces ?? []).flatMap((piece, pieceIndex) =>
+        occupiedVoxels(piece.placement).map((voxel, voxelIndex) => (
           <Cell
             key={`${pieceIndex}-${voxelIndex}`}
             voxel={voxel}
-            color={PALETTE[piece.color]}
+            color={PALETTE[piece.placement.color]}
             size={size}
-            shape={piece.shape}
-            rotation={piece.rotation}
+            shape={piece.placement.shape}
+            rotation={piece.placement.rotation}
             onSurface={moveGhost}
+            onRemove={piece.owner === viewerId ? (event) => {
+              event.nativeEvent.preventDefault();
+              const start = pointerStart.current;
+              pointerStart.current = null;
+              if (!start || start.button !== 2 || Math.hypot(event.nativeEvent.clientX - start.x, event.nativeEvent.clientY - start.y) > 4) return;
+              event.stopPropagation();
+              onRemovePiece(piece);
+            } : undefined}
           />
         )),
       )}
+      {demo && SAMPLE.flatMap((piece, pieceIndex) => occupiedVoxels(piece).map((voxel, voxelIndex) => <Cell key={`demo-${pieceIndex}-${voxelIndex}`} voxel={voxel} color={PALETTE[piece.color]} size={size} shape={piece.shape} rotation={piece.rotation} onSurface={moveGhost} />))}
       {occupiedVoxels(ghost).map((voxel, index) => (
         <Cell
           key={`ghost-${index}`}
@@ -200,5 +233,6 @@ export default function PlotScene({
       <ContactShadows opacity={0.28} scale={extent + 4} blur={2.5} far={Math.max(8, size.y)} />
       <OrbitControls makeDefault minDistance={extent * 0.35} maxDistance={extent * 2.2} maxPolarAngle={Math.PI / 2.15} target={[0, 1, 0]} />
     </Canvas>
+    </div>
   );
 }

@@ -47,11 +47,15 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline
 
 .workspace { min-height: calc(100vh - 68px); display: grid; grid-template-columns: minmax(0, 1fr) 390px; }
 .plot-stage { min-height: 680px; position: relative; overflow: hidden; background: var(--paper-deep); border-right: 1px solid var(--ink); }
+.plot-canvas { position: absolute; inset: 0; }
 .side-rail { max-height: calc(100vh - 68px); overflow-y: auto; scrollbar-color: var(--orange) var(--paper-deep); }
 .plot-stage canvas { touch-action: none; }
 .plot-coordinates { position: absolute; z-index: 2; inset: 18px 20px auto; display: flex; justify-content: space-between; color: #41483e; font-size: 0.69rem; font-weight: 700; letter-spacing: 0.09em; pointer-events: none; }
 .plot-coordinates span:nth-child(2) { border-bottom: 1px solid currentColor; padding-bottom: 3px; }
 .scene-note { position: absolute; z-index: 2; left: 20px; bottom: 18px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: rgba(238, 233, 220, 0.9); font-size: 0.72rem; font-weight: 650; }
+.scene-controls { position: absolute; z-index: 2; right: 20px; bottom: 18px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 12px; max-width: 390px; padding: 8px 10px; background: rgba(238, 233, 220, 0.92); color: var(--muted); font-size: .66rem; pointer-events: none; }
+.scene-controls span { white-space: nowrap; }
+.scene-controls kbd { color: var(--ink); }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--orange); box-shadow: 0 2px 8px rgba(185, 68, 29, 0.35); }
 .scene-loading { height: 100%; display: grid; place-items: center; color: var(--muted); font-size: 0.85rem; }
 
@@ -206,6 +210,10 @@ kbd { padding: 1px 4px; border: 1px solid var(--rule); background: #fffaf0; font
   .archive-empty-copy { grid-column: 1 / -1; grid-row: 2; }
 }
 
+@media (min-width: 481px) and (max-width: 960px) {
+  .scene-controls { bottom: 58px; }
+}
+
 @media (max-width: 480px) {
   .wordmark { font-size: 1.08rem; }
   .plot-mark { width: 21px; height: 21px; }
@@ -213,6 +221,7 @@ kbd { padding: 1px 4px; border: 1px solid var(--rule); background: #fffaf0; font
   .plot-stage { min-height: 52svh; }
   .plot-coordinates { inset: 12px 12px auto; }
   .scene-note { left: 12px; bottom: 12px; }
+  .scene-controls { display: none; }
   .shape-button { min-height: 68px; }
 }
 
